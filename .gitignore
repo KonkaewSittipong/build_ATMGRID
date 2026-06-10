@@ -1,0 +1,18 @@
+# --- regenerable / large data (NOT for GitHub) -----------------------------
+spectro_grid/          # ATLAS12 models, SYNTHE spectra, output .h5 grids (~3 GB)
+spectro_grid_test/     # multi-band validation outputs
+test_grid/             # scratch grid outputs
+
+# --- python caches ----------------------------------------------------------
+__pycache__/
+*.pyc
+*.pyo
+
+# --- notebooks / editor / misc ----------------------------------------------
+.ipynb_checkpoints/
+.aider*
+*.swp
+*~
+
+# --- claude code session/local ---
+.claude/

@@ -228,7 +228,7 @@ def build_spectrum(mp, out):
     try:
         # run the 6-step SYNTHE chain -> spectrum.bin (mu-resolved intensity)
         binp = B.build_intensity_bin(scratch, mp, WSTART, WEND, RESOLU,
-                                     0.0, SYNTHE_MOLECULES, [B.S.DEFAULT_LINELIST], "AIR")
+                                     VTURB, SYNTHE_MOLECULES, [B.S.DEFAULT_LINELIST], "AIR")
         B.write_spectro_h5(binp, out)             # decode -> log Iλ -> HDF5 (+fsync)
     finally:
         shutil.rmtree(scratch, ignore_errors=True)   # always clean scratch (RAM)
@@ -246,7 +246,7 @@ def build_spectrum_native(mp, out):
         for bi, ba in enumerate(batches):         # one SYNTHE run per angle-batch
             sc = Path(tempfile.mkdtemp(prefix=f"synN_{mp.parent.name}_{bi}_", dir=_scratch_base()))
             scratch.append(sc)
-            bins.append(B.build_intensity_bin(sc, mp, WSTART, WEND, RESOLU, 0.0,
+            bins.append(B.build_intensity_bin(sc, mp, WSTART, WEND, RESOLU, VTURB,
                                               SYNTHE_MOLECULES, [B.S.DEFAULT_LINELIST],
                                               "AIR", mu_angles=ba))
         B.write_spectro_h5_merged(bins, out)      # stitch the batches' mu together
@@ -280,9 +280,10 @@ def assemble():
     logg    = np.array(sorted({lg for _, lg, _ in info}))
     iT = {round(v, 6): k for k, v in enumerate(logtemp)}    # value -> index lookups
     ig = {round(v, 6): k for k, v in enumerate(logg)}
-    # one band-flux cube per filter, NaN where a grid point has no model
-    flux = {fd["name"]: np.full((len(logtemp), len(logg), len(mu_ref)), np.nan)
-            for _, fd in bands}
+    # one band-flux cube per filter, NaN where a grid point has no model.
+    # Keyed by filter INDEX (not name) so multiple filters sharing a band name
+    # (e.g. two "r" filters from different instruments) don't collide/overwrite.
+    flux = [np.full((len(logtemp), len(logg), len(mu_ref)), np.nan) for _ in bands]
 
     # second pass: read each spectrum ONCE, band-integrate through ALL filters
     for lt, lg, f in info:
@@ -290,12 +291,12 @@ def assemble():
             wav  = h["cols/wav"][...]
             spec = np.exp(h["flux"][0, 0])        # (n_mu, n_wav) Iλ (undo the stored log)
         i, j = iT[round(lt, 6)], ig[round(lg, 6)]
-        for band, fd in bands:
+        for k, (band, fd) in enumerate(bands):
             fb  = band(wav)                       # transmission S(λ) on the spectrum's grid
             # AB band-averaged flux density (Bessell & Murphy 2012 A12b), Simpson over λ:
             num = BI.scipy.integrate.simpson(spec * fb * wav, x=wav)        # ∫ Iλ S λ dλ  (per mu)
             den = BI.scipy.integrate.simpson(fb * BI.C_A_PER_S / wav, x=wav)  # ∫ S (c/λ) dλ
-            flux[fd["name"]][i, j] = num / den    # <f_nu>(mu) for this (Teff,logg)
+            flux[k][i, j] = num / den             # <f_nu>(mu) for this (Teff,logg)
 
     # optional shared mu target (icarus 91): explicit MU list, or copy from MU_REF grid
     mu_target = None
@@ -306,8 +307,8 @@ def assemble():
             mu_target = h["cols/mu"][...]
 
     T = np.exp(logtemp)                           # Teff (K) for the print
-    for band, fd in bands:                        # write one grid per filter
-        fl      = flux[fd["name"]]
+    for k, (band, fd) in enumerate(bands):        # write one grid per filter
+        fl      = flux[k]
         pivot   = float(BI.pivot_wavelength(band, wav_ref))    # band metadata
         missing = int(np.isnan(fl[..., 0]).sum())              # grid points with no model
         logflux, mu_out = np.log(fl), mu_ref       # store log<f_nu>; default native mu
